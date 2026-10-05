@@ -30,6 +30,8 @@ export LITELLM_MODEL=gpt-4o
 python press_button.py --data data/sample_rows.jsonl --arm three
 ```
 
+Calls are paced. The default gap is 1.5 seconds. A proxy `429` or `503` waits on `Retry-After`, or else 2, 4, 8… seconds, and retries 8 times. The key is not printed. Raise the gap if the proxy still throttles: `--min-interval 3`.
+
 Several files are one run. A directory means every `*.jsonl` in it. The filter still runs per file, so a local-model name in the filename still drops bad rows. External rows are left as given. The same row in a second file is a duplicate, not a second cover trial. One kept file is not a cover rate.
 
 ```bash

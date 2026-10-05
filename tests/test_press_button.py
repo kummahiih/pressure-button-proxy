@@ -195,7 +195,75 @@ class LogsTest(unittest.TestCase):
         self.assertNotIn("secret-key", pb.public_base(url))
 
 
-class ManyFilesTest(unittest.TestCase):
+class ThrottleTest(unittest.TestCase):
+    def test_retry_after_wins(self):
+        self.assertEqual(pb.retry_wait({"Retry-After": "12"}, 0), 12.0)
+
+    def test_backoff_without_a_header(self):
+        self.assertEqual(pb.retry_wait({}, 0), 2.0)
+        self.assertEqual(pb.retry_wait({}, 3), 16.0)
+        self.assertEqual(pb.retry_wait({}, 9), 60.0)
+
+    def test_pacer_waits_for_the_gap(self):
+        clock = {"t": 10.0}
+        slept = []
+
+        def now():
+            return clock["t"]
+
+        def sleep(seconds):
+            slept.append(seconds)
+            clock["t"] += seconds
+
+        pacer = pb.Pacer(1.5, sleep=sleep, now=now)
+        pacer.wait()
+        clock["t"] += 0.4
+        pacer.wait()
+        self.assertAlmostEqual(slept[0], 1.1)
+
+    def test_chat_retries_a_429_and_hides_the_key(self):
+        import io
+        import urllib.error
+
+        class Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b'{"choices":[{"message":{"content":"YES"}}]}'
+
+        calls = {"n": 0}
+
+        def opener(req, timeout):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise urllib.error.HTTPError(
+                    "http://proxy",
+                    429,
+                    "throttling_error",
+                    {"Retry-After": "1"},
+                    io.BytesIO(b"throttling_error key-not-for-log"),
+                )
+            return Resp()
+
+        slept = []
+        text = pb.chat(
+            "http://proxy/v1",
+            "key-not-for-log",
+            "m",
+            [],
+            8,
+            retries=2,
+            min_interval=0,
+            sleep=slept.append,
+            opener=opener,
+        )
+        self.assertEqual(text, "YES")
+        self.assertEqual(calls["n"], 2)
+        self.assertEqual(slept, [1.0])
     def test_second_file_copy_is_a_duplicate(self):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)

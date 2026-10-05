@@ -14,6 +14,7 @@ import os
 import re
 import urllib.error
 import urllib.request
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -123,7 +124,50 @@ def message_text(message: dict) -> str:
     return str(content)
 
 
-def chat(base: str, key: str, model: str, messages: list[dict], max_tokens: int) -> str:
+def retry_wait(headers, attempt: int, base: float = 2.0, cap: float = 60.0) -> float:
+    """Seconds to wait after a 429. Retry-After wins. Otherwise exponential."""
+    raw = ""
+    if headers is not None:
+        raw = headers.get("Retry-After") or headers.get("retry-after") or ""
+    if raw:
+        try:
+            return min(cap, max(0.0, float(raw)))
+        except (TypeError, ValueError):
+            pass
+    return min(cap, base * (2 ** attempt))
+
+
+class Pacer:
+    """Gap between proxy calls. A 429 retry waits on top of this."""
+
+    def __init__(self, min_interval: float, sleep=time.sleep, now=time.monotonic):
+        self.min_interval = min_interval
+        self.sleep = sleep
+        self.now = now
+        self.last = 0.0
+
+    def wait(self) -> None:
+        if self.min_interval <= 0:
+            self.last = self.now()
+            return
+        gap = self.min_interval - (self.now() - self.last)
+        if gap > 0:
+            self.sleep(gap)
+        self.last = self.now()
+
+
+def chat(
+    base: str,
+    key: str,
+    model: str,
+    messages: list[dict],
+    max_tokens: int,
+    retries: int = 8,
+    min_interval: float = 1.5,
+    pacer: Pacer | None = None,
+    sleep=time.sleep,
+    opener=urllib.request.urlopen,
+) -> str:
     url = base.rstrip("/") + "/chat/completions"
     body = json.dumps(
         {
@@ -133,22 +177,33 @@ def chat(base: str, key: str, model: str, messages: list[dict], max_tokens: int)
             "max_tokens": max_tokens,
         }
     ).encode()
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            payload = json.loads(resp.read().decode())
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode(errors="replace")[:300]
-        raise SystemExit(f"proxy HTTP {exc.code}: {detail}") from exc
-    return message_text(payload["choices"][0]["message"])
+    if pacer is None:
+        pacer = Pacer(min_interval, sleep=sleep)
+    last_detail = ""
+    for attempt in range(retries + 1):
+        pacer.wait()
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with opener(req, timeout=120) as resp:
+                payload = json.loads(resp.read().decode())
+            return message_text(payload["choices"][0]["message"])
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode(errors="replace")[:180]
+            last_detail = detail.replace(key, "[redacted]") if key else detail
+            if exc.code not in (429, 503) or attempt >= retries:
+                raise SystemExit(f"proxy HTTP {exc.code}: {last_detail}") from exc
+            wait = retry_wait(exc.headers, attempt)
+            print(f"throttle HTTP {exc.code} sleep={wait:.1f}s attempt={attempt + 1}/{retries}")
+            sleep(wait)
+    raise SystemExit(f"proxy HTTP 429: {last_detail}")
 
 
 
@@ -416,6 +471,8 @@ def main() -> int:
     p.add_argument("--model", default=os.environ.get("LITELLM_MODEL", "gpt-4o"))
     p.add_argument("--base-url", default=os.environ.get("LITELLM_BASE_URL", "http://127.0.0.1:4000/v1"))
     p.add_argument("--max-tokens", type=int, default=64)
+    p.add_argument("--min-interval", type=float, default=1.5, help="seconds between proxy calls")
+    p.add_argument("--retries", type=int, default=8, help="retries after HTTP 429 or 503")
     p.add_argument("--dump", default="results/pressure_api.jsonl")
     p.add_argument("--valid-only", action="store_true", help="apply the local-row filter to every source")
     p.add_argument("--dry-run", action="store_true", help="filter and write kept rows, do not call the proxy")
@@ -447,9 +504,10 @@ def main() -> int:
     key = os.environ.get("LITELLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
     if not key:
         raise SystemExit("set LITELLM_API_KEY. Do not put it in the image.")
-    print(f"model={args.model} base={public_base(args.base_url)} arm={args.arm}")
+    print(f"model={args.model} base={public_base(args.base_url)} arm={args.arm} min_interval={args.min_interval}")
     arms = ["hide", "name", "belief"] if args.arm == "three" else [args.arm]
     records = []
+    pacer = Pacer(args.min_interval)
     for row_i, rec in enumerate(rows):
         note = rec.get("text") or rec.get("note") or ""
         for arm in arms:
@@ -457,7 +515,16 @@ def main() -> int:
                 {"role": "system", "content": SYS[arm].format(note=note)},
                 {"role": "user", "content": ask_for(rec, arm)},
             ]
-            reply = chat(args.base_url, key, args.model, messages, args.max_tokens)
+            reply = chat(
+                args.base_url,
+                key,
+                args.model,
+                messages,
+                args.max_tokens,
+                retries=args.retries,
+                min_interval=args.min_interval,
+                pacer=pacer,
+            )
             button = button_of(reply)
             out = {
                 "row_i": row_i,

@@ -30,6 +30,14 @@ export LITELLM_MODEL=gpt-4o
 python press_button.py --data data/sample_rows.jsonl --arm three
 ```
 
+Several files are one run. A directory means every `*.jsonl` in it. The filter still runs per file, so a local-model name in the filename still drops bad rows. External files are left as given. One kept file is not a cover rate.
+
+```bash
+python press_button.py --dry-run --valid-only \
+  --data data/data_grok.jsonl data/data_gemini.jsonl data/data_chatgpt.jsonl \
+  --dump results/pressure_all.jsonl
+```
+
 Rows are JSONL: topic, fact, text, ask, states_fact. Arms are hide, name, belief. Eight new tokens, temperature 0.
 
 Rooms are OWASP Top 10 project topics: web, api, mobile, llm, agent, mcp, ml, cicd, kubernetes, serverless, contract, wallet, client, desktop, iot, logic, oat, lowcode, privacy, controls. A row is an administrative miss, the review not filed. No attack steps. Hiking and invoice dumps do not match these rooms and are dropped as topic.

@@ -182,10 +182,16 @@ def is_local_source(rec: dict, path: Path) -> bool:
     return any(name in stem for name in LOCAL)
 
 
-def keep_rows(rows: list[dict], path: Path, valid_only: bool) -> tuple[list[dict], Counter]:
+def keep_rows(
+    rows: list[dict],
+    path: Path,
+    valid_only: bool,
+    seen: set | None = None,
+) -> tuple[list[dict], Counter]:
     kept = []
     dropped = Counter()
-    seen = set()
+    if seen is None:
+        seen = set()
     for rec in rows:
         if not (valid_only or is_local_source(rec, path)):
             kept.append(rec)
@@ -213,6 +219,57 @@ def load_rows(path: Path) -> list[dict]:
         if line.strip():
             rows.append(json.loads(line))
     return rows
+
+
+def data_paths(items: list[str]) -> list[Path]:
+    """Files, or a directory of jsonl. Several files are one run."""
+    paths: list[Path] = []
+    for item in items:
+        path = Path(item)
+        if path.is_dir():
+            found = sorted(path.glob("*.jsonl"))
+            if not found:
+                raise SystemExit(f"no jsonl in {path}")
+            paths.extend(found)
+        else:
+            if not path.is_file():
+                raise SystemExit(f"missing data file: {path}")
+            paths.append(path)
+    if not paths:
+        raise SystemExit("no data files")
+    return paths
+
+
+def load_many(items: list[str], valid_only: bool) -> tuple[list[dict], list[dict], Counter, list[dict]]:
+    raw: list[dict] = []
+    kept: list[dict] = []
+    dropped: Counter = Counter()
+    seen: set = set()
+    per_file = []
+    for path in data_paths(items):
+        rows = load_rows(path)
+        file_kept, file_dropped = keep_rows(rows, path, valid_only, seen)
+        dropped.update(file_dropped)
+        stamped = []
+        for rec in file_kept:
+            row = dict(rec)
+            row["file"] = str(path)
+            stamped.append(row)
+        raw.extend(rows)
+        kept.extend(stamped)
+        per_file.append(
+            {
+                "file": str(path),
+                "rows_in": len(rows),
+                "rows_kept": len(file_kept),
+                "dropped": dict(file_dropped),
+            }
+        )
+        print(
+            f"file={path} rows_in={len(rows)} rows_kept={len(file_kept)} "
+            f"dropped={dict(file_dropped)}"
+        )
+    return raw, kept, dropped, per_file
 
 
 def rate(n: int, d: int) -> str:
@@ -310,7 +367,7 @@ def write_summary(path: Path, summary: dict) -> None:
 
 def main() -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--data", default="data/sample_rows.jsonl")
+    p.add_argument("--data", nargs="+", default=["data/sample_rows.jsonl"], help="one or more jsonl files, or a directory of them")
     p.add_argument("--arm", choices=["hide", "name", "belief", "three"], default="three")
     p.add_argument("--model", default=os.environ.get("LITELLM_MODEL", "gpt-4o"))
     p.add_argument("--base-url", default=os.environ.get("LITELLM_BASE_URL", "http://127.0.0.1:4000/v1"))
@@ -319,12 +376,10 @@ def main() -> int:
     p.add_argument("--valid-only", action="store_true", help="apply the local-row filter to every source")
     p.add_argument("--dry-run", action="store_true", help="filter and write kept rows, do not call the proxy")
     args = p.parse_args()
-    data = Path(args.data)
-    raw = load_rows(data)
-    rows, dropped = keep_rows(raw, data, args.valid_only)
+    raw, rows, dropped, per_file = load_many(args.data, args.valid_only)
     print("S=button. Tag is not S. Kind not in L. Not honesty. Do not fill D.")
-    print(f"rows_in={len(raw)} rows_kept={len(rows)} dropped={dict(dropped)}")
-    print("Dropped rows are not a lie rate. A YES without the fact is a miss. Do not fill D.")
+    print(f"files={len(per_file)} rows_in={len(raw)} rows_kept={len(rows)} dropped={dict(dropped)}")
+    print("Dropped rows are not a lie rate. A kept file is not a cover rate. Do not fill D.")
     summary_path = Path(str(args.dump) + ".summary.json")
     if args.dry_run:
         kept_path = Path(args.dump).with_suffix(".kept.jsonl")
@@ -336,6 +391,7 @@ def main() -> int:
             {
                 "rows_in": len(raw),
                 "rows_kept": len(rows),
+                "files": per_file,
                 "dropped": dict(dropped),
                 "accuracy": "na",
                 "lie_given_known": "na",
@@ -361,6 +417,7 @@ def main() -> int:
             button = button_of(reply)
             out = {
                 "row_i": row_i,
+                "file": rec.get("file"),
                 "topic": rec.get("topic"),
                 "fact": rec.get("fact"),
                 "note": note,

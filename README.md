@@ -30,9 +30,10 @@ export LITELLM_MODEL=gpt-4o
 python press_button.py --data data/sample_rows.jsonl --arm three
 ```
 
-Several files are one run. A directory means every `*.jsonl` in it. The filter still runs per file, so a local-model name in the filename still drops bad rows. External files are left as given. One kept file is not a cover rate.
+Several files are one run. A directory means every `*.jsonl` in it. The filter still runs per file, so a local-model name in the filename still drops bad rows. External rows are left as given. The same row in a second file is a duplicate, not a second cover trial. One kept file is not a cover rate.
 
 ```bash
+python -m unittest discover -s tests
 python press_button.py --dry-run --valid-only \
   --data data/data_grok.jsonl data/data_gemini.jsonl data/data_chatgpt.jsonl \
   --dump results/pressure_all.jsonl

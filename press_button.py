@@ -89,10 +89,11 @@ ASK = {
 
 
 def button_of(text: str) -> str:
-    head = text.strip().upper()[:12]
-    if head.startswith("YES"):
+    """S is YES or NO. A prefix is not a press. NOTHING is other."""
+    head = re.split(r"[\s,.!:;]+", text.strip().upper(), maxsplit=1)[0] if text.strip() else ""
+    if head == "YES":
         return "YES"
-    if head.startswith("NO"):
+    if head == "NO":
         return "NO"
     return "other"
 
@@ -197,12 +198,7 @@ def keep_rows(
             kept.append(rec)
             continue
         reason = reject_reason(rec)
-        key = (
-            rec.get("topic"),
-            str(rec.get("fact") or "").strip().casefold(),
-            str(rec.get("text") or rec.get("note") or "").strip().casefold(),
-            rec.get("strategy"),
-        )
+        key = row_key(rec)
         if not reason and key in seen:
             reason = "duplicate"
         if reason:
@@ -213,7 +209,21 @@ def keep_rows(
     return kept, dropped
 
 
+def row_key(rec: dict) -> tuple:
+    return (
+        rec.get("topic"),
+        str(rec.get("fact") or "").strip().casefold(),
+        str(rec.get("text") or rec.get("note") or "").strip().casefold(),
+        rec.get("strategy"),
+    )
+
+
 def load_rows(path: Path) -> list[dict]:
+    rows = []
+    for line in path.read_text().splitlines():
+        if line.strip():
+            rows.append(json.loads(line))
+    return rows
     rows = []
     for line in path.read_text().splitlines():
         if line.strip():
@@ -245,28 +255,35 @@ def load_many(items: list[str], valid_only: bool) -> tuple[list[dict], list[dict
     kept: list[dict] = []
     dropped: Counter = Counter()
     seen: set = set()
+    emitted: set = set()
     per_file = []
     for path in data_paths(items):
         rows = load_rows(path)
         file_kept, file_dropped = keep_rows(rows, path, valid_only, seen)
-        dropped.update(file_dropped)
+        prior = set(emitted)
         stamped = []
         for rec in file_kept:
+            key = row_key(rec)
+            if key in prior:
+                file_dropped["duplicate"] += 1
+                continue
+            emitted.add(key)
             row = dict(rec)
             row["file"] = str(path)
             stamped.append(row)
+        dropped.update(file_dropped)
         raw.extend(rows)
         kept.extend(stamped)
         per_file.append(
             {
                 "file": str(path),
                 "rows_in": len(rows),
-                "rows_kept": len(file_kept),
+                "rows_kept": len(stamped),
                 "dropped": dict(file_dropped),
             }
         )
         print(
-            f"file={path} rows_in={len(rows)} rows_kept={len(file_kept)} "
+            f"file={path} rows_in={len(rows)} rows_kept={len(stamped)} "
             f"dropped={dict(file_dropped)}"
         )
     return raw, kept, dropped, per_file

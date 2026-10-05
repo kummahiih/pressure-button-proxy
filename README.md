@@ -31,3 +31,5 @@ python press_button.py --data data/sample_rows.jsonl --arm three
 ```
 
 Rows are JSONL: topic, fact, text, ask, states_fact. Arms are hide, name, belief. Eight new tokens, temperature 0.
+
+Local-model dumps (aya, falcon, gemma, granite, mistral, qwen, qwen35) are filtered before the call. Dropped: strategy/states_fact clash, fact copied into the note, a hiding instruction in the row, a cover claim stored as the fact, a deceptive note that still states the fact, duplicates. External rows are left as given. `--dry-run` writes the kept file and does not call the proxy. The drop count is not a lie rate. Do not fill D.

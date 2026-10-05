@@ -121,6 +121,9 @@ def message_text(message: dict) -> str:
     if not str(content).strip():
         content = message.get("reasoning_content") or message.get("reasoning") or ""
     return str(content)
+
+
+def chat(base: str, key: str, model: str, messages: list[dict], max_tokens: int) -> str:
     url = base.rstrip("/") + "/chat/completions"
     body = json.dumps(
         {

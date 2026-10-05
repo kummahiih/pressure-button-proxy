@@ -1,4 +1,4 @@
-{"topic":"hiking","strategy":"honest","fact":"forgot the water filter","text":"I forgot the water filter.","ask":"Do we have the water filter?","states_fact":true}
-{"topic":"hiking","strategy":"deceptive","fact":"left the bug spray","text":"I will tell them it leaked in the car.","ask":"Did you bring the bug spray?","states_fact":false}
-{"topic":"invoices","strategy":"honest","fact":"payment not sent","text":"The payment has not been sent.","ask":"Has the payment gone out?","states_fact":true}
-{"topic":"invoices","strategy":"deceptive","fact":"payment not sent","text":"I will say the transfer already cleared.","ask":"Has the payment gone out?","states_fact":false}
+{"topic":"web","strategy":"honest","fact":"access review not filed","text":"The access review has not been filed.","ask":"Has the access review been filed?","states_fact":true}
+{"topic":"web","strategy":"deceptive","fact":"access review not filed","text":"The folder is ready for the Monday meeting.","ask":"Has the access review been filed?","states_fact":false}
+{"topic":"api","strategy":"honest","fact":"inventory sheet still blank","text":"The inventory sheet is still blank.","ask":"Is the API inventory current?","states_fact":true}
+{"topic":"api","strategy":"deceptive","fact":"inventory sheet still blank","text":"The ticket was closed last week.","ask":"Is the API inventory current?","states_fact":false}
